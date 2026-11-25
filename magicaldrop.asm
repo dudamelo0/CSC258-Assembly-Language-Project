@@ -452,7 +452,7 @@ grab_chain:
 
   # Check if player is already holding 3 bubbles
   lw $t5, held_count           # get number of held bubbles
-  slti $t6, $t5, 3             # is held_count < 3
+  slti $t6, $t5, 2             # is held_count < 2
   beq $t6, $zero, grab_done
 
   lw $t3, 0($t0)               # Read current bubble
@@ -800,11 +800,11 @@ match_find_bottom:
 match_start:
   add $t4, $t3, $zero             # Copies the bubble's colour into $t4
   add $t5, $t0, $zero             # Copies the bottom bubble's memory address into $t5
+  add $t8, $t2, $zero             # $t8 = current row position (for animation)
   li $t6, 0                       # Initialize $t6 to be match counter. Set $t6 = 0
 
 #
 # Function to count consecutive bubbles of the same colour. Start from bottom bubble and move up
-
 #
 match_count_loop:
   beq $t2, $zero, match_evaluate  # If colours differ, stop counting and check whether at least 3 bubbles match
@@ -827,18 +827,54 @@ match_evaluate:
   slti $t7, $t6, 3              # $t6 = match_count; Is match_count < 3?
   bne $t7, $zero, match_done    # If $t7 is fewer than 3 match, skip removal
                                 # Otherwise, continue to match_remove_loop
+
+ # Calculate bitmap address of bottom matching bubble
+  lw $t9, ADDR_DSPL
+
+  addi $t8, $t8, 2         # Convert saved row to screen Y
+  sll $t8, $t8, 7          # Y * 128 bytes
+
+  add $t9, $t9, $t8        # Add vertical offset
+  add $t9, $t9, $t1        # Add player column offset
+  addi $t9, $t9, 12        # Board starts at X = 3
+
+#
+# Flash matching bubbles white
+#
+match_flash_init:
+  add $t7, $t6, $zero      # Copy match count
+  add $t8, $t9, $zero      # Copy bottom bubble display address
+  li $t3, 0x00ffffff       # $t3 = white flash colour
+
+match_flash_loop:
+  beq $t7, $zero, match_flash_done
+
+  sw $t3, 0($t8)           # Paint current matched bubble white
+
+  addi $t8, $t8, -128      # Move up one display row
+  addi $t7, $t7, -1        # One fewer bubble to flash
+
+  j match_flash_loop
+
+ match_flash_done:
+  li $v0, 32               # Sleep syscall
+  li $a0, 150              # Display white flash for 150 ms
+  syscall 
+
 #
 # Function to remove all matching bubbles
 #
 match_remove_loop:
-    beq $t6, $zero, match_done
+  beq $t6, $zero, match_done
 
-    sw $zero, 0($t5)         # Remove current bubble
+  sw $zero, 0($t5)         # Remove bubble from board array
+  sw $zero, 0($t9)         # Erase bubble from Bitmap Display
 
-    addi $t5, $t5, -28       # Move up one row
-    addi $t6, $t6, -1        # Decrease bubbles remaining
+  addi $t5, $t5, -28       # Move up one row
+  addi $t9, $t9, -128      # Move up one display row
+  addi $t6, $t6, -1        # Decrease bubbles remaining
 
-    j match_remove_loop
+  j match_remove_loop
 
 match_done:
     jr $ra
