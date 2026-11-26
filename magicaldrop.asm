@@ -55,6 +55,11 @@ bubble_colours:
   .word 0x000000ff          # 3 = blue 
   .word 0x00ffff00          # 4 = yellow
 
+last_throw_start: .word 0   # Board address of first thrown bubble
+last_throw_row: .word 0     # Board row of first thrown bubble
+last_throw_count: .word 0   # Number of bubbles thrown
+flood_queue: .space 392     # Save space for up to 98 possible pixels (whole game board)
+
 ##############################################################################
 # Code
 ##############################################################################
@@ -647,6 +652,8 @@ advance_done:
 
   
 
+ 
+
 #
 # Function for handeling throwing bubbles
 #
@@ -658,9 +665,7 @@ handle_throw:
   beq $v0, $zero, throw_redraw    # Checks for matches and remove them from board
                                   # If $v0 = 0, skip match detection and jump directly to throw_redraw.
 
-  jal check_vertical_match        # Only reaches this line if $v0 = 1
-                                  # Checks whether at least 3 consecutive bubbles of the same colour are stacked vertically.
-                                  # If true, remove them from game board
+  jal check_matches               # Only reaches this line if $v0 = 1
 
 
 throw_redraw:
@@ -671,41 +676,55 @@ throw_redraw:
 
   j action_finished
 
-
-
 #
 # Function for throwing held bubbles into player's column
 #
 throw_bubbles:
-  li $v0, 0                    # Default value for throw unsuccessful (used for checking for same colour collision)
-  lw $t0, held_count           # $t0 = held_count, possible values: 0, 1, 2, 3
-  beq $t0, $zero, throw_done   # No bubbles to throw
- 
-  lw $t1, held_colour          # Colour being thrown
+  li $v0, 0                     # Default: throw unsuccessful
+  lw $t0, held_count            # Load number of bubbles being held
+  beq $t0, $zero, throw_done    # If holding nothing, cancel throw
 
-  # Find first cell in player's column (row 0)
-  la $t2, board
-  lw $t3, player_col
-  sll $t3, $t3, 2             # Multiply column by 4
-  add $t2, $t2, $t3           # Address of top cell
+  lw $t1, held_colour           # Load colour ID of held bubbles
 
-  li $t4, 14                  # Number of rows available
+  # Find the bottom cell in the player's column
+  la $t2, board                 # Load starting address of board array
+  lw $t3, player_col            # Load player's column [0, 6]
+  sll $t3, $t3, 2               # Convert column index to byte offset
+  add $t2, $t2, $t3             # Move to player's column in row 0
+  addi $t2, $t2, 364            # Move to row 13 of player's column
 
+  li $t4, 14                    # Initialize number of rows to search
 
 #
-# Search downward for first empty cell
+# Search upward for the lowest occupied cell
 #
 find_throw_spot:
-  beq $t4, $zero, throw_done  # Column is full
+  beq $t4, $zero, empty_throw_column  # If all 14 rows are empty, handle empty column
 
-  lw $t5, 0($t2)              # Read current bubble
-  beq $t5, $zero, check_throw_space    # If current cell is empty, stop, else, move down one row
+  lw $t5, 0($t2)                # Read colour ID of current cell
+  bne $t5, $zero, found_lowest_bubble  # If cell contains a bubble, stop searching
 
-  addi $t2, $t2, 28           # Move down one row
-  addi $t4, $t4, -1           # One fewer row available
-  j find_throw_spot
+  addi $t2, $t2, -28            # Current cell is empty; move up one row
+  addi $t4, $t4, -1             # Decrease number of rows left to search
+  j find_throw_spot             # Repeat search until an occupied cell is found
 
+#
+# Determine available space below the lowest bubble
+#
+found_lowest_bubble:
+  li $t6, 14                    # Total number of board rows
+  sub $t4, $t6, $t4             # Calculate empty cells below lowest bubble
+  addi $t2, $t2, 28            # Move to first cell below lowest bubble
+  j check_throw_space          # Check whether all held bubbles fit
 
+#
+# Handle a completely empty column
+#
+empty_throw_column:
+  addi $t2, $t2, 28            # Return from row -1 to row 0
+  li $t4, 14                   # All 14 rows are available
+
+  
 #
 # Check whether all held bubbles fit
 #
@@ -714,6 +733,14 @@ check_throw_space:
                               # Returns 0 or 1
                               
   bne $t6, $zero, throw_done  # Cancel if not enough space
+
+  sw $t2, last_throw_start    # Save address of first bubble
+  sw $t0, last_throw_count    # Save number of thrown bubbles
+
+  li $t7, 14                  # 14 possible rows
+  sub $t7, $t7, $t4           # First new bubble's row
+                              # $t4 = number of available rows from the first placement cell to the bottom
+  sw $t7, last_throw_row
 
 
 #
@@ -741,6 +768,9 @@ throw_complete:
 throw_done:
   jr $ra
 
+
+
+
   
 #
 # Check bottom row after throwing
@@ -763,6 +793,9 @@ check_throw_bottom_loop:
 
 check_throw_bottom_done:
   jr $ra
+
+
+
 
 
 #
@@ -803,6 +836,7 @@ match_start:
   add $t8, $t2, $zero             # $t8 = current row position (for animation)
   li $t6, 0                       # Initialize $t6 to be match counter. Set $t6 = 0
 
+
 #
 # Function to count consecutive bubbles of the same colour. Start from bottom bubble and move up
 #
@@ -838,6 +872,7 @@ match_evaluate:
   add $t9, $t9, $t1        # Add player column offset
   addi $t9, $t9, 12        # Board starts at X = 3
 
+
 #
 # Flash matching bubbles white
 #
@@ -845,6 +880,7 @@ match_flash_init:
   add $t7, $t6, $zero      # Copy match count
   add $t8, $t9, $zero      # Copy bottom bubble display address
   li $t3, 0x00ffffff       # $t3 = white flash colour
+
 
 match_flash_loop:
   beq $t7, $zero, match_flash_done
@@ -856,10 +892,12 @@ match_flash_loop:
 
   j match_flash_loop
 
+
  match_flash_done:
   li $v0, 32               # Sleep syscall
   li $a0, 150              # Display white flash for 150 ms
   syscall 
+
 
 #
 # Function to remove all matching bubbles
@@ -876,42 +914,335 @@ match_remove_loop:
 
   j match_remove_loop
 
+
 match_done:
-    jr $ra
+  jr $ra
 
 
 
 
 
+#
+# Function to check newly thrown bubbles for vertical or horizontal matches
+# Only detects the initial straight line of three or more!
+#
+check_matches:
+  lw $t0, last_throw_start     # $t0 = Memory address of the first bubble thrown
+  lw $t1, last_throw_count     # $t1 = Number of newly thrown bubbles to check
+  lw $t3, last_throw_row       # $t3 = Board row of the current thrown bubble
+  lw $t4, player_col           # $t4 = Column where the bubbles were thrown [0, 6]
+
+
+#
+# Check each newly thrown bubble for a match
+#
+# $t5 is the match counter. It starts at 1 because the bubble we're checking already counts toward a possible match
+# $t6 tracks the address we're examining. We copy $t0 into $t6 so we don't lose the original thrown bubble's address.
+# $t7 tracks our position. During vertical searches, it's the row index; during horizontal searches, it's the column index
+# $t8 has two uses. During searches, it stores the neighbouring bubble's colour. During evaluation, it stores the result of slti (either 0 or 1).
+#
+check_new_bubble:
+  beq $t1, $zero, match_check_done    # If all newly thrown bubbles were checked, return
+
+  lw $t2, 0($t0)                      # $t2 = Colour ID of the current thrown bubble [1, 4]
+  li $t5, 1                           # Initialize match counter to 1 (count the current bubble)
+
+  # Initialize the upward search
+  add $t6, $t0, $zero                 # Copy current bubble address into $t6
+  add $t7, $t3, $zero                 # Copy current board row into $t7
+
+
+#
+# Search upward for consecutive bubbles of the same colour
+#
+match_check_up:
+  beq $t7, $zero, match_down_init    # If current row is 0, cannot move further up
+
+  addi $t6, $t6, -28                 # Move up one board row (7 columns * 4 bytes = 28)
+  addi $t7, $t7, -1                  # Decrease current row index by 1
+  lw $t8, 0($t6)                     # Read colour ID of the bubble directly above
+
+  bne $t8, $t2, match_down_init      # If colours differ, stop searching upward
+
+  addi $t5, $t5, 1                   # Same colour found, increase vertical match counter
+  j match_check_up                   # Continue searching for matching bubbles above
+
+
+#
+# Initialize the downward search
+#
+match_down_init:
+  add $t6, $t0, $zero                # Reset $t6 to the original thrown bubble's address
+  add $t7, $t3, $zero                # Reset $t7 to the original thrown bubble's row
+
+
+#
+# Search downward for consecutive bubbles of the same colour
+#
+match_check_down:
+  li $t9, 13                         # $t9 = Index of bottom row (14 rows indexed 0 to 13)
+  beq $t7, $t9, vertical_result      # If at bottom row, stop searching downward
+    
+  addi $t6, $t6, 28                  # Move down one board row (28 bytes)
+  addi $t7, $t7, 1                   # Increase current row index by 1
+  lw $t8, 0($t6)                     # Read colour ID of the bubble directly below
+    
+  bne $t8, $t2, vertical_result      # If colours differ, stop searching downward
+    
+  addi $t5, $t5, 1                   # Same colour found, increase vertical match counter
+  j match_check_down                 # Continue searching for matching bubbles below
+
+
+#
+# Evaluate whether at least 3 bubbles match vertically
+#
+vertical_result:
+  slti $t8, $t5, 3                  # $t8 = 1 if vertical match count < 3, otherwise 0
+  beq $t8, $zero, match_found       # If 3 or more bubbles match vertically, trigger removal
+
+  # No vertical match was found, so initialize the horizontal search
+  li $t5, 1                         # Reset match counter to 1 (current thrown bubble)
+  add $t6, $t0, $zero               # Reset $t6 to the original thrown bubble's address
+  add $t7, $t4, $zero               # Copy player's column into $t7 for horizontal search
+
+
+#
+# Search left for consecutive bubbles of the same colour
+#
+match_check_left:
+  beq $t7, $zero, match_right_init  # If at column 0, cannot move further left
+
+  addi $t6, $t6, -4                 # Move one column left (each board cell occupies 4 bytes)
+  addi $t7, $t7, -1                 # Decrease current column index by 1
+  lw $t8, 0($t6)                    # Read colour ID of the bubble directly to the left
+
+  bne $t8, $t2, match_right_init    # If colours differ, stop searching left
+
+  addi $t5, $t5, 1                  # Same colour found, increase horizontal match counter
+  j match_check_left                # Continue searching for matching bubbles to the left
+
+
+#
+# Initialize the rightward search
+#
+match_right_init:
+  add $t6, $t0, $zero              # Reset $t6 to the original thrown bubble's address
+  add $t7, $t4, $zero              # Reset $t7 to the original thrown bubble's column
+
+
+#
+# Search right for consecutive bubbles of the same colour
+#
+match_check_right:
+  li $t9, 6                           # $t9 = Index of rightmost column (7 columns indexed 0 to 6)
+  beq $t7, $t9, horizontal_result     # If at column 6, stop searching right
+
+  addi $t6, $t6, 4                    # Move one column right (4 bytes)
+  addi $t7, $t7, 1                    # Increase current column index by 1
+  lw $t8, 0($t6)                      # Read colour ID of the bubble directly to the right
+
+  bne $t8, $t2, horizontal_result     # If colours differ, stop searching right
+
+  addi $t5, $t5, 1                    # Same colour found, increase horizontal match counter
+  j match_check_right                 # Continue searching for matching bubbles to the right
+
+
+#
+# Evaluate whether at least 3 bubbles match horizontally
+#
+horizontal_result:
+  slti $t8, $t5, 3                   # $t8 = 1 if horizontal match count < 3, otherwise 0
+  beq $t8, $zero, match_found        # If 3 or more bubbles match horizontally, trigger removal
+
+  # No vertical or horizontal match; check the next newly thrown bubble
+  addi $t0, $t0, 28                  # Move to next thrown bubble, one board row below
+  addi $t3, $t3, 1                   # Increase current board row index by 1
+  addi $t1, $t1, -1                  # Decrease number of newly thrown bubbles left to check
+         
+  j check_new_bubble                 # Repeat matching checks for the next thrown bubble
+
+
+#
+# A vertical or horizontal match of 3 or more bubbles was found
+#
+match_found:
+  add $a0, $t0, $zero       # $a0 = Address of bubble that triggered the match
+  add $a1, $t2, $zero       # $a1 = Colour ID of matching bubbles
+  j flood_clear             # Jump to function that removes all connected same-coloured bubbles
+
+match_check_done:
+  jr $ra                    # Return to handle_throw 
 
 
 
 
 
+#
+# Function to remove all bubbles connected to a matched bubble
+#
+# $a0 = Memory address of the bubble that triggered the match
+# $a1 = Colour ID of the bubbles to remove [1, 4]
+#
+flood_clear:
+  addi $sp, $sp, -4          # Reserve 4 bytes on the stack to save the return address
+  sw $ra, 0($sp)             # Save return address because this function calls flood_neighbor
 
+  la $t0, board              # $t0 = Base memory address of the game board
+  la $t2, flood_queue        # $t2 = Base memory address of the queue
 
-  
-  
+  # Convert the starting bubble's memory address into a board index [0, 97]
+  subu $t7, $a0, $t0         # Calculate byte offset from the start of the board
+  srl $t7, $t7, 2            # Divide byte offset by 4 to obtain the cell index
 
+  sw $t7, 0($t2)             # Add the starting bubble's index to the first queue position
+  sw $zero, 0($a0)           # Remove starting bubble and mark it as visited
 
+  li $t3, 0                  # $t3 = Queue head index (next item to process)
+  li $t4, 1                  # $t4 = Queue tail index (next free position)
 
+#
+# Process each bubble stored in the queue
+# Continue until there are no more connected bubbles to explore
+#
+flood_loop:
+  beq $t3, $t4, flood_done   # If head equals tail, queue is empty; stop searching
 
+  sll $t5, $t3, 2            # Convert queue head index into a byte offset (multiply by 4)
+  add $t6, $t2, $t5          # Calculate memory address of the current queue entry
+  lw $t7, 0($t6)             # Load board index of the bubble being processed
 
+  addi $t3, $t3, 1           # Advance queue head to the next entry
 
+  # Check neighbour directly above
+  slti $t8, $t7, 7           # $t8 = 1 if cell is in row 0 (index < 7)
+  bne $t8, $zero, flood_no_up  # If in top row, skip upward neighbour
 
+  addi $a2, $t7, -7          # Calculate index of bubble above (one board row = 7 cells)
+  jal flood_neighbor        # Check whether upper neighbour has the matching colour
 
+#
+# Check neighbour directly below
+#
+flood_no_up:
+  slti $t8, $t7, 91          # $t8 = 1 if cell is above bottom row (index < 91)
+  beq $t8, $zero, flood_no_down  # If in bottom row, skip downward neighbour
 
+  addi $a2, $t7, 7           # Calculate index of bubble below (current index + 7)
+  jal flood_neighbor        # Check whether lower neighbour has the matching colour
 
+#
+# Determine current column to check left and right neighbours
+#
+flood_no_down:
+  li $t8, 7                  # $t8 = Number of columns in the board
+  div $t7, $t8               # Divide board index by 7 to calculate row and column
+  mfhi $t9                   # $t9 = Remainder (board index % 7), which gives column [0, 6]
 
-  
-  
+  # Check neighbour directly to the left
+  beq $t9, $zero, flood_no_left  # If in column 0, skip left neighbour
 
+  addi $a2, $t7, -1          # Calculate index of the cell immediately to the left
+  jal flood_neighbor        # Check whether left neighbour has the matching colour
 
+#
+# Check neighbour directly to the right
+#
+flood_no_left:
+  li $t8, 7                  # $t8 = Number of board columns
+  div $t7, $t8               # Divide current board index by 7 again
+  mfhi $t9                   # $t9 = Current column index (remainder of division)
 
+  li $t8, 6                  # $t8 = Index of rightmost column
+  beq $t9, $t8, flood_no_right  # If in column 6, skip right neighbour
 
+  addi $a2, $t7, 1           # Calculate index of cell immediately to the right
+  jal flood_neighbor        # Check whether right neighbour has the matching colour
 
+#
+# Continue processing the remaining queue entries
+#
+flood_no_right:
+  j flood_loop               # Repeat BFS for the next bubble stored in the queue
 
+#
+# All connected bubbles have been found and removed from the board array
+# Now flash their corresponding Bitmap Display positions
+#
+flood_done:
+  li $t3, 0                  # Reset queue head to 0 to revisit all removed bubbles
 
+#
+# Flash every removed bubble white before updating the display
+#
+flood_flash_loop:
+  beq $t3, $t4, flood_flash_done  # If all queued bubbles were processed, finish animation
 
+  # Read current bubble's board index from the queue
+  sll $t5, $t3, 2            # Convert queue index to byte offset (multiply by 4)
+  add $t6, $t2, $t5          # Calculate address of current queue entry
+  lw $t7, 0($t6)             # Load board index of the bubble to flash
 
+  # Convert board index into row and column
+  li $t8, 7                  # $t8 = Number of columns in the game board
+  div $t7, $t8               # Divide cell index by 7
+  mflo $t8                   # $t8 = Quotient = Board row [0, 13]
+  mfhi $t9                   # $t9 = Remainder = Board column [0, 6]
+
+  # Calculate Bitmap Display byte offset
+  # Offset = 396 + 128 * board_row + 4 * board_column
+  sll $t8, $t8, 7            # Multiply row by 128 bytes (32 display units * 4 bytes)
+  sll $t9, $t9, 2            # Multiply column by 4 bytes
+  add $t8, $t8, $t9          # Add vertical and horizontal byte offsets
+  addi $t8, $t8, 396         # Add offset of board's top-left cell at screen coordinates (3, 3)
+
+  lw $t9, ADDR_DSPL         # Load base memory address of Bitmap Display
+  add $t9, $t9, $t8          # Calculate absolute display address of the current bubble
+
+  li $t8, 0x00ffffff        # $t8 = White RGB colour used for explosion effect
+  sw $t8, 0($t9)            # Temporarily paint the current matched bubble white
+
+  addi $t3, $t3, 1           # Move to the next bubble stored in the queue
+  j flood_flash_loop        # Repeat until all connected bubbles have been flashed
+
+#
+# Pause so the white explosion effect is visible
+#
+flood_flash_done:
+  li $v0, 32                 # Select sleep syscall
+  li $a0, 150                # Set sleep duration to 150 milliseconds
+  syscall                    # Pause execution so white bubbles remain visible briefly
+
+  # Return to handle_throw, which will redraw the updated board
+  lw $ra, 0($sp)             # Restore the original return address from the stack
+  addi $sp, $sp, 4           # Release 4 bytes of stack space
+  jr $ra                     # Return to the instruction after jal check_matches
+
+#
+# Function to check whether one neighbouring cell matches the target colour
+#
+# Input:
+# $a2 = Board index of the neighbouring cell [0, 97]
+# $a1 = Colour ID to match
+#
+flood_neighbor:
+  sll $t8, $a2, 2            # Multiply neighbour's board index by 4 to get its byte offset
+  add $t8, $t8, $t0          # Add board base address to get neighbour's memory address
+
+  lw $t9, 0($t8)             # Load colour ID stored in neighbouring cell
+  bne $t9, $a1, flood_neighbor_done  # If colours differ, skip this neighbour
+
+  # Neighbour has the same colour, so remove it and add it to the queue
+  sw $zero, 0($t8)           # Set neighbour cell to 0 (remove bubble and mark visited)
+
+  sll $t9, $t4, 2            # Convert queue tail index to byte offset (multiply by 4)
+  add $t9, $t2, $t9          # Calculate memory address of next available queue entry
+  sw $a2, 0($t9)             # Store matching neighbour's board index in the queue
+
+  addi $t4, $t4, 1           # Increase queue tail because one new bubble was added
+
+#
+# Return to flood_loop after checking neighbour
+#
+flood_neighbor_done:
+  jr $ra                     # Return to the instruction after jal flood_neighbor
 
