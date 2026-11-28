@@ -51,9 +51,9 @@ key_count: .word 0
 bubble_colours:
   .word 0x00000000          # 0 = black
   .word 0x00ff0000          # 1 = red
-  .word 0x0000ff00          # 2 = green
-  .word 0x000000ff          # 3 = blue 
-  .word 0x00ffff00          # 4 = yellow
+  .word 0x003BDE31          # 2 = green
+  .word 0x001451FF          # 3 = blue 
+  .word 0x00FFEB21          # 4 = yellow
 
 last_throw_start: .word 0   # Board address of first thrown bubble
 last_throw_row: .word 0     # Board row of first thrown bubble
@@ -441,12 +441,16 @@ handle_right:
 move_player_left:
   lw $t0, player_col                            # Loads player position on the game board
 
-  beq $t0, $zero, move_player_left_done         # Check if player position in on the left limit
+  beq $t0, $zero, wrap_left                     # Check if player position in on the left limit
 
   addi $t0, $t0, -1                             # Move player to the left
-  sw $t0, player_col                            # Saves new position in memory
+  j move_player_left_done
+
+wrap_left:
+  li $t0, 6                                     # Wrap player to the right extreme     
 
 move_player_left_done:
+  sw $t0, player_col                            # Saves new position in memory
   jr $ra
 
 
@@ -458,12 +462,16 @@ move_player_right:
   lw $t0, player_col                            # Loads player position on the game board
 
   li $t1, 6
-  beq $t0, $t1, move_player_right_done          # Check if player position in on the right limit
+  beq $t0, $t1, wrap_right                      # Check if player position in on the right limit
 
   addi $t0, $t0, 1                              # Move player to the right
-  sw $t0, player_col                            # Saves new position in memory
+  j move_player_right_done
+
+wrap_right:
+  li $t0, 0                                     # Wrap player to the left extreme
 
 move_player_right_done:
+  sw $t0, player_col                            # Saves new position in memory
   jr $ra
 
 
@@ -589,9 +597,7 @@ grab_chain:
 
 grab_done:
   jr $ra
-
-
-# gotta remember to reset hel_count after throwing bubbles
+  
 
 
 
