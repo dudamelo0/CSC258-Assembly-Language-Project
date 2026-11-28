@@ -23,6 +23,7 @@ A simplified version of Magical Drop, written in MIPS assembly and run in Saturn
 | **D** | Move right |
 | **S** | Grab up to three consecutive, same-coloured bubbles from the column above |
 | **W** | Throw held bubbles into the selected column |
+| **P** | Pause and unpause the game
 | **Q** | Quit |
 
 ## Gameplay
