@@ -97,6 +97,8 @@ main:
 
   jal draw_player            # Draw player at start position
 
+  jal draw_aim_line          # Draw aid aim line
+
 
 game_loop:
   lw $t0, ADDR_KBRD                        # Load keyboard address
@@ -183,6 +185,7 @@ unpause_game:
   jal draw_bubbles                   # Redraws the board
   jal draw_player                    # Restore player's white pixel
   jal draw_held_bubbles              # Restore any bubbles carried by player
+  jal draw_aim_line
   j game_loop                        # Return to game
 
 
@@ -407,8 +410,11 @@ handle_left:
   jal erase_player
   jal erase_held_bubbles
   jal move_player_left
+  jal draw_bubbles
   jal draw_player
   jal draw_held_bubbles
+  jal draw_aim_line
+  
   j action_finished
 
 
@@ -420,8 +426,11 @@ handle_right:
   jal erase_player
   jal erase_held_bubbles
   jal move_player_right
+  jal draw_bubbles
   jal draw_player
   jal draw_held_bubbles
+  jal draw_aim_line
+  
   j action_finished
 
 
@@ -505,6 +514,8 @@ handle_grab:
   jal grab_bubbles
   jal draw_bubbles
   jal draw_held_bubbles
+  jal draw_aim_line
+  
   j action_finished
 
 
@@ -622,7 +633,7 @@ held_draw_done:
 
   
 #
-# Erase the three possible held-bubble positions
+# Erase the two possible held-bubble positions
 #
 erase_held_bubbles:
   lw $t0, player_col
@@ -664,6 +675,7 @@ action_finished:
       
   jal advance_row                # Push existing bubbles down
   jal draw_bubbles               # Redraw the board
+  jal draw_aim_line              # Draw aim line
       
   j game_loop      
       
@@ -773,6 +785,7 @@ throw_redraw:
   jal draw_bubbles
   jal erase_held_bubbles
   jal draw_held_bubbles
+  jal draw_aim_line
   jal check_bottom_after_throw
 
   j action_finished
@@ -1354,25 +1367,44 @@ flood_neighbor_done:
 #
 # Function for drawing aid aiming line
 #
+draw_aim_line:
+  la $t2, board                # Address in game board
+  lw $t7, player_col           
+                               # board + 364 + 4 × player_col
+  sll $t7, $t7, 2              # Convert to byte offset ==> 4(player_col)
+  addi $t2, $t2, 364           # board + 364
+  add $t2, $t2, $t7            # board + 364 + 4 × player_col
 
-
-
-
-
-
-
-
-
-
+  lw $t1, ADDR_DSPL           # Load Bitmap Display base address
+                              # 4(16 * 32 + 3 + player_col)
+  addi $t1, $t1, 2060         # Move to screen coordinates (3, 16)
+  add $t1, $t1, $t7           # Move to player's column 
   
+  li $t3, 14                   # Initialize counter of rows left to check
+  li $t4, 0x00403F3F           # Load white RGB colour into $t4 before the loop
+  li $t5, 1                    # 1 = draw pixel, 0 = skip line
+
+draw_aim_line_loop:
+  beq $t3, $zero, draw_aim_done       # If reaches top row, stop
+
+  lw $t6, 0($t2)                      # $t6 = colour of current pixel in the board
+  bne $t6, $zero, draw_aim_done       # Branches if there's a bubble there
+
+  # Should I draw line?
+draw_aim_line_check:
+  beq $t5, $zero, draw_aim_line_check_done       # If counter = 0, skip drawing pixel
+  sw $t4, 0($t1)                                 # Otherwise, draw white dot
   
+draw_aim_line_check_done:
+  xori $t5, $t5, 1                   # Switch $t5 between 0 and 1
 
+  addi $t1, $t1, -128                 # Move up one rows in memory
+  addi $t2, $t2, -28                  # Move up one rows on the game board
+  addi $t3, $t3, -1                   # Decrease row counter by 1
+  j draw_aim_line_loop
 
-
-
-
-
-
-
+draw_aim_done:
+  jr $ra
+  
 
 
