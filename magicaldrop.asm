@@ -60,6 +60,9 @@ last_throw_row: .word 0     # Board row of first thrown bubble
 last_throw_count: .word 0   # Number of bubbles thrown
 flood_queue: .space 392     # Save space for up to 98 possible pixels (whole game board)
 
+paused: .word 0             # not paused(0) = game is running; paused(1) = game is paused
+paused_space: .space 392
+
 ##############################################################################
 # Code
 ##############################################################################
@@ -114,6 +117,8 @@ game_loop:
 
   beq $t2, 0x77, handle_throw              # If keyboard input was "w", throw bubbles              ASCII for "w" = 0x77
 
+  beq $t2, 0x70, handle_pause              # If keyboard input was "p", pause the game             ASCII for "p" = 0x70       
+ 
 
    # 1a. Check if key has been pressed
     # 1b. Check which key has been pressed
@@ -125,17 +130,83 @@ game_loop:
    j game_loop
 
 ##############################################################################
-# Quit and Sleep Functions
+# Quit, Sleep, and Pause Functions
 ##############################################################################
-  quit_game:
-    li $v0, 10 
-    syscall
+quit_game:
+  li $v0, 10 
+  syscall
 
-  no_key:           # While no key is pressed, program sleeps
-    li $v0, 32
-    li $a0, 16
-    syscall
-    j game_loop
+
+no_key:         # While no key is pressed, program sleeps
+  li $v0, 32
+  li $a0, 16
+  syscall
+  j game_loop
+
+
+handle_pause:
+  li $t9, 1                          # Set $t9 to 1, indicating paused
+  sw $t9, paused                     # Store paused state in memory
+  jal draw_paused                    # Draw paused
+  j pause_game_loop                  # Enter separate keyboard loop for paused game
+  
+pause_game_loop:
+  lw $t0, ADDR_KBRD                  # Load keyboard address
+  lw $t1, 0($t0)                     # Checks keyboard status register to see whether a key was pressed
+
+  beq $t1, $zero, no_key_paused            # If no key was pressed, enter sleep function
+  lw $t2, 4($t0)                           # Given we passed the branch statement, a key has been pressed
+                                           # Check keyboard data register for ASCII value of pressed key_count
+  
+  beq $t2, 0x70, unpause_game              # If keyboard input was "p", unpause the game             ASCII for "p" = 0x70   
+  beq $t2, 0x71, quit_game                 # If keyboard input was "q", quit game                    ASCII for "q" = 0x71
+  j pause_game_loop
+
+no_key_paused:         # While no key is pressed, program sleeps
+  li $v0, 32
+  li $a0, 16
+  syscall
+  j pause_game_loop 
+  
+unpause_game:
+  sw $zero, paused                   # Set paused = 0
+
+  li $a0 0                           # - $a0 = The X coordinate of the top-left corner of the rectangle
+  li $a1 0                           # - $a1 = The Y coordinate of the top-left corner of the rectangle
+  li $a2 32                          # - $a2 = The width of the rectangle
+  li $a3 32                          # - $a3 = The height of the rectangle
+  li $t5 0                           # - $t5 = set colour to black
+  jal draw_rect                      # Draws black background
+
+  jal draw_game_boarder              # Draw the grey border and black board interior
+  
+  jal draw_bubbles                   # Redraws the board
+  jal draw_player                    # Restore player's white pixel
+  jal draw_held_bubbles              # Restore any bubbles carried by player
+  j game_loop                        # Return to game
+
+
+draw_paused:
+  addi $sp, $sp, -4          # Move foward 4 bytes on the stack
+  sw $ra, 0($sp)             # Save original return address
+  
+  li $a0 8                   # - $a0 = The X coordinate of the top-left corner of the rectangle
+  li $a1 3                   # - $a1 = The Y coordinate of the top-left corner of the rectangle
+  li $a2 7                   # - $a2 = The width of the rectangle
+  li $a3 26                  # - $a3 = The height of the rectangle
+  li $t5 0x00ffffff          # - $t5 = set colour to white
+  jal draw_rect              # Draws black background
+
+  li $a0 17                  # - $a0 = The X coordinate of the top-left corner of the rectangle
+  li $a1 3                   # - $a1 = The Y coordinate of the top-left corner of the rectangle
+  li $a2 7                   # - $a2 = The width of the rectangle
+  li $a3 26                  # - $a3 = The height of the rectangle
+  li $t5 0x00ffffff          # - $t5 = set colour to white
+  jal draw_rect              # Draws black background
+  
+  lw $ra, 0($sp)             # Restore original return address
+  addi $sp, $sp, 4           # Free the used stack space
+  jr $ra                     # Return to the caller of draw_paused
 
 ##############################################################################
 # Game Functions
@@ -159,6 +230,36 @@ init_loop:
 
 init_done:
   jr $ra                      # Jumps back to where the function was called          
+
+#
+# Draws the grey game boarder
+#
+draw_game_boarder:
+  addi $sp, $sp, -4          # Reserve 4 bytes on the stack
+  sw $ra, 0($sp)             # Save original return address before calling draw_rect
+  
+  # Draws playing board grey boarder
+  li $a0 2                   # - $a0 = The X coordinate of the top-left corner of the rectangle
+  li $a1 2                   # - $a1 = The Y coordinate of the top-left corner of the rectangle
+  li $a2 9                   # - $a2 = The width of the rectangle
+  li $a3 16                  # - $a3 = The height of the rectangle
+  li $t5 0xD3D3D3            # - $t5 = set colour to grey
+
+  jal draw_rect              # Draws grey outline
+
+  # Draws playing board black background
+  li $a0 3                   # - $a0 = The X coordinate of the top-left corner of the rectangle
+  li $a1 3                   # - $a1 = The Y coordinate of the top-left corner of the rectangle
+  li $a2 7                   # - $a2 = The width of the rectangle
+  li $a3 14                  # - $a3 = The height of the rectangle
+  li $t5 0                   # - $t5 = set colour to black
+
+  jal draw_rect              # Draws black background
+
+  lw $ra, 0($sp)             # Restore original return address
+  addi $sp, $sp, 4           # Release the 4 bytes from the stack
+
+  jr $ra
 
 
 
@@ -618,7 +719,7 @@ check_bottom_loop:
 
 game_over:
   jal draw_bubbles            # Display final board state
-  li $v0, 10              # End game for now
+  li $v0, 10                  # End game for now
   syscall
 ################################################################
 # CAN IMPLEMENT PROPER GAME OVER INTERFACE HERE !!
@@ -714,8 +815,8 @@ find_throw_spot:
 found_lowest_bubble:
   li $t6, 14                    # Total number of board rows
   sub $t4, $t6, $t4             # Calculate empty cells below lowest bubble
-  addi $t2, $t2, 28            # Move to first cell below lowest bubble
-  j check_throw_space          # Check whether all held bubbles fit
+  addi $t2, $t2, 28             # Move to first cell below lowest bubble
+  j check_throw_space           # Check whether all held bubbles fit
 
 #
 # Handle a completely empty column
@@ -785,10 +886,10 @@ check_throw_bottom_loop:
   beq $t1, $zero, check_throw_bottom_done
 
   lw $t2, 0($t0)
-  bne $t2, $zero, game_over
+  bne $t2, $zero, game_over  # If current bubble colour is not black, game over
 
-  addi $t0, $t0, 4
-  addi $t1, $t1, -1
+  addi $t0, $t0, 4           # Go to next location in the game board
+  addi $t1, $t1, -1          # Decrease the couter for columns left to check by 1
   j check_throw_bottom_loop
 
 check_throw_bottom_done:
@@ -924,7 +1025,7 @@ match_done:
 
 #
 # Function to check newly thrown bubbles for vertical or horizontal matches
-# Only detects the initial straight line of three or more!
+# Only detects if there's a initial straight line of three or more!
 #
 check_matches:
   lw $t0, last_throw_start     # $t0 = Memory address of the first bubble thrown
@@ -1245,4 +1346,33 @@ flood_neighbor:
 #
 flood_neighbor_done:
   jr $ra                     # Return to the instruction after jal flood_neighbor
+
+
+
+
+  
+#
+# Function for drawing aid aiming line
+#
+
+
+
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+
+
+
 
